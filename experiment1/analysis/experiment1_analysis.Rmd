@@ -1,0 +1,252 @@
+---
+title: "Uncertainty Representation: Experiment 1 Analysis"
+author(s): "Joey Heffner"; "Marc Lluis Vives"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+# Libraries
+
+You will need the following libraries to run everything in the script. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warnings = FALSE, message = FALSE)
+
+# Libraries
+library(here)         # relative paths
+library(janitor)      # clean names
+library(tidyverse)    # tidy functions
+library(broom)        # convert stats to tidy
+library(knitr)        # knit functions
+library(kableExtra)   # extra markdown functions
+library(ggrepel)      # geom_text_repel
+library(gridExtra)    # aesthetics 
+library(purrr)        # map functions
+library(rjson)        # json reader
+library(jsonlite)     # json reader
+library(abind)        # abind
+library(multiway)     # INDSCAL
+library(corrplot)     # correlation plots
+library(Matrix)       # matrix manipulation functions
+library(jmuOutlier)   # permutation tests
+library(ggdendro)     # hc in ggplot
+library(latex2exp)    # latex expressions
+```
+
+# Load data 
+
+```{r load, message=FALSE, warning=FALSE} 
+# Relative paths
+dir_project <- here()
+dir_study <- str_c(dir_project, "/experiment1/")
+dir_clean <- str_c(dir_study, "/data/clean")
+dir_graphs <- str_c(dir_study, "graphs")
+
+# Load
+df_darm <- read_csv(str_c(dir_clean, "/darm_uncertainty.csv"))
+df_internal <- read_csv(str_c(dir_clean, "/internal.csv"))
+df_external <- read_csv(str_c(dir_clean, "/external.csv"))
+df_prob <- read_csv(str_c(dir_clean, "/probability.csv"))
+df_spam <- read_csv(str_c(dir_clean, "/exp1_spam.csv"))
+
+# df_spam %>% distinct(user_id) %>% nrow()
+```
+
+# Figure 1 - Methods
+
+See publication for Figure 1. 
+
+# Figure 2 - Conceptual representations of uncertainty are one dimensional
+
+Figure 2 in the paper.
+
+```{r}
+coord_to_sim <- function(data) {
+  
+  sub_data <- data %>% 
+    arrange(uncertain)
+  
+  df_emo <- sub_data %>%
+    # Create the grid
+    mutate(uncertain1 = uncertain) %>%
+    select(starts_with("uncertain")) %>%
+    complete(uncertain, uncertain1) %>%
+    #filter(emotion != emotion1) %>%
+    left_join(sub_data, by = "uncertain") %>%
+    left_join(sub_data, by = c("uncertain1" = "uncertain")) %>%
+    #.x is uncertain, .y is uncertain1
+    mutate(distance = sqrt((x_coord.y - x_coord.x)^2 + (y_coord.y - y_coord.x)^2)) %>%
+    select(uncertain, uncertain1, distance)
+  
+  return(df_emo)
+}
+
+df_to_matrix <- function(df) {
+  
+  unc_matrix <- matrix(df$mean_dist, nrow = 18, ncol = 18, byrow=TRUE, 
+                       dimnames = list(c(unique(df$uncertain)), c(unique(df$uncertain))))
+  
+  return(unc_matrix)
+}
+
+fig2_spam_data <- df_spam %>%
+  select(user_id, x_coord = final_x, y_coord = final_y, uncertain = uncertain_word) %>%
+  nest(data = c(x_coord, y_coord, uncertain)) %>%
+  group_by(user_id) %>% 
+  mutate(df_unc = map(data, coord_to_sim))
+
+# Group average RDM 
+fig2_group <- fig2_spam_data %>% 
+  select(-data) %>%
+  unnest(df_unc) %>%
+  group_by(uncertain, uncertain1) %>%
+  summarise(mean_dist = mean(distance))
+
+fig2_group_rdm <- df_to_matrix(fig2_group)
+  
+# Multi-dimensional scaling
+fig2_mds <- cmdscale(fig2_group_rdm, eig=TRUE)
+fig2_eigens <- fig2_mds$eig
+pca1_var <- fig2_eigens[1] / sum(fig2_eigens)
+pca2_var <- fig2_eigens[2] / sum(fig2_eigens)
+pca3_var <- fig2_eigens[3] / sum(fig2_eigens)
+
+## Figure 2a
+fig2a_data <- data.frame(var = fig2_mds$eig / sum(fig2_mds$eig), 
+                         pca = seq(1, length(fig2_mds$eig)))
+
+fig2a_plot <- ggplot(fig2a_data, aes(x = pca, y = var)) + 
+  geom_point(size = 2) + 
+  geom_line() + 
+  scale_x_continuous(name = "Principal Component", breaks = c(5, 10, 15)) + 
+  scale_y_continuous(name = "Variance Explained (%)", label = scales::percent) + 
+  theme_classic() + 
+  theme(text = element_text(size = 10))
+fig2a_plot
+ggsave(filename=str_c(dir_graphs, "/fig2a.pdf"), fig2a_plot , width = 3, height = 2.5, useDingbats=F)
+
+## Figure 2b
+fig2b_data <- as.data.frame(fig2_mds$points) %>%
+  rename(pca1 = V1, pca2 = V2) %>%
+  rownames_to_column(var = "uncertain")
+
+fig2b_plot <- ggplot(fig2b_data, aes(x = pca1, y = pca2)) + 
+  geom_point() + 
+  geom_text_repel(aes(label = uncertain)) + 
+  xlab(str_c("PCA1: ", as.character(round(pca1_var*100)), "%")) + 
+  ylab(str_c("PCA2: ", as.character(round(pca2_var*100)), "%")) + 
+  theme_classic() + 
+  theme(text = element_text(size = 12), 
+        aspect.ratio = 1)
+fig2b_plot
+ggsave(filename=str_c(dir_graphs, "/fig2b.pdf"), fig2b_plot , width = 4, height = 4, useDingbats=F)
+
+## Hierarchical clustering 
+fig2c_hc <- hclust(as.dist(fig2_group_rdm), method = "complete")
+
+## figure 2c - RDM with clustering
+cluster_cols <- as.data.frame(cutree(fig2c_hc, k = 2)) %>%
+  rownames_to_column(var = "uncertain") %>%
+  rename(clusters = `cutree(fig2c_hc, k = 2)`)
+
+fig2c_data <- fig2_group %>%
+  left_join(., cluster_cols %>% select(cluster1 = clusters, uncertain = uncertain), by = "uncertain") %>%
+  left_join(., cluster_cols %>% select(cluster2 = clusters, uncertain1 = uncertain), by = "uncertain1")
+
+fig2c_plot <- ggplot(fig2c_data, aes(x = reorder(uncertain, cluster1), y = reorder(uncertain1, cluster2))) + 
+  geom_tile(aes(fill = mean_dist)) + 
+  scale_fill_gradient2(low = "red", mid = "orange", midpoint = mean(fig2c_data$mean_dist), high = "yellow") + 
+  theme_classic() + 
+  theme(text = element_text(size = 16), 
+        axis.text.x = element_text(angle = 45, hjust = 1), 
+        aspect.ratio = 1)
+fig2c_plot
+ggsave(filename=str_c(dir_graphs, "/fig2c.pdf"), fig2c_plot , width = 6, height = 6, useDingbats=F)
+```
+
+# Intext statistics
+
+```{r intext_stats}
+## Figure 2 - MDS solution x probability 
+fig2a_prob <- df_prob %>% 
+  group_by(uncertain_word) %>%
+  summarise(mean_p = mean(probability/100), sd_p = sd(probability/100), 
+            n_p = n(), se_p = sd_p / sqrt(n_p))
+
+fig2a_data <- as.data.frame(fig2_mds$points) %>%
+  rename(pca1 = V1, pca2 = V2) %>%
+  rownames_to_column(var = "uncertain_word") %>%
+  left_join(., fig2a_prob, by = "uncertain_word")
+
+fig2a_cor <- cor.test(fig2a_data$pca1, fig2a_data$mean_p, method = "spearman", exact = FALSE)
+
+## Figure 2 - MDS solution x valence
+fig2b_val <- df_darm %>% 
+  group_by(uncertain_word) %>%
+  summarise(mean_v = mean(valence), sd_v = sd(valence), 
+            n_v = n(), se_v = sd_v / sqrt(n_v))
+
+fig2b_data <- as.data.frame(fig2_mds$points) %>%
+  rename(pca1 = V1, pca2 = V2) %>%
+  rownames_to_column(var = "uncertain_word") %>%
+  left_join(., fig2b_val, by = "uncertain_word")
+
+fig2b_cor <- cor.test(fig2b_data$pca1, fig2b_data$mean_v, method = "spearman", exact = FALSE)
+
+
+## Figure 2 - MDS solution x arousal
+fig2c_aro <- df_darm %>% 
+  group_by(uncertain_word) %>%
+  summarise(mean_a = mean(arousal), sd_a = sd(arousal), 
+            n_a = n(), se_a = sd_a / sqrt(n_a))
+
+fig2c_data <- as.data.frame(fig2_mds$points) %>%
+  rename(pca1 = V1, pca2 = V2) %>%
+  rownames_to_column(var = "uncertain_word") %>%
+  left_join(., fig2c_aro, by = "uncertain_word")
+
+fig2c_cor <- cor.test(fig2c_data$pca1, fig2c_data$mean_a, method = "spearman", exact = FALSE)
+
+
+## Figure 2 - MDS solution x internal
+fig2d_int <- df_internal %>% 
+  group_by(uncertain_word) %>%
+  summarise(mean_in = mean(internal), sd_in = sd(internal), 
+            n_in = n(), se_in = sd_in / sqrt(n_in))
+
+fig2d_data <- as.data.frame(fig2_mds$points) %>%
+  rename(pca1 = V1, pca2 = V2) %>%
+  rownames_to_column(var = "uncertain_word") %>%
+  left_join(., fig2d_int, by = "uncertain_word")
+
+fig2d_cor <- cor.test(fig2d_data$pca1, fig2d_data$mean_in, method = "spearman", exact = FALSE)
+
+
+## Figure 2 - MDS solution x external
+fig2e_ext <- df_external %>% 
+  group_by(uncertain_word) %>%
+  summarise(mean_ext = mean(external), sd_ext = sd(external), 
+            n_ext = n(), se_ext = sd_ext / sqrt(n_ext))
+
+fig2e_data <- as.data.frame(fig2_mds$points) %>%
+  rename(pca1 = V1, pca2 = V2) %>%
+  rownames_to_column(var = "uncertain_word") %>%
+  left_join(., fig2e_ext, by = "uncertain_word")
+
+fig2e_cor <- cor.test(fig2e_data$pca1, fig2e_data$mean_ext, method = "spearman", exact = FALSE)
+
+fig2a_cor # probability, r = -0.88
+fig2b_cor # valence, r = -0.59
+fig2c_cor # arousal, r = -0.02
+fig2d_cor # internal, r = -0.03
+fig2e_cor # external, r = 0.09
+
+## Correlation between prob and valence
+fig2g_data <- fig2b_val %>%
+  cbind(fig2a_prob)
+
+cor.test(fig2g_data$mean_v, fig2g_data$mean_p, method = "spearman", exact = F)
+```

@@ -1,0 +1,671 @@
+---
+title: "Uncertainty Representation: Experiment 2 Analysis"
+author(s): "Joey Heffner"; "Marc Lluis Vives"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+# Libraries
+
+You will need the following libraries to run everything in the script. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warnings = FALSE, message = FALSE)
+
+# Libraries
+library(here)         # relative paths
+library(janitor)      # clean names
+library(tidyverse)    # tidy functions
+library(broom)        # convert stats to tidy
+library(knitr)        # knit functions
+library(kableExtra)   # extra markdown functions
+library(ggrepel)      # geom_text_repel
+library(gridExtra)    # aesthetics 
+library(purrr)        # map functions
+library(rjson)        # json reader
+library(jsonlite)     # json reader
+library(abind)        # abind
+library(multiway)     # INDSCAL
+library(corrplot)     # correlation plots
+library(lme4)         # mixed effects
+library(lmerTest)     # mixed effects 
+library(Matrix)       # matrix manipulation functions
+library(jmuOutlier)   # permutation tests
+library(ggdendro)     # hc in ggplot
+library(latex2exp)    # latex expressions
+```
+
+# Load data 
+
+```{r load, message=FALSE, warning=FALSE} 
+# Relative paths
+dir_project <- here()
+dir_study <- str_c(dir_project, "/experiment2")
+dir_clean <- str_c(dir_study, "/data/clean")
+dir_graphs <- str_c(dir_study, "/graphs")
+
+# Data
+df_indiv_measures <-  read_csv(str_c(dir_clean, "/individual_measures.csv"))
+df_darm <- read_csv(str_c(dir_clean, "/darm_uncertainty.csv"))
+df_gambles <- read_csv(str_c(dir_clean, "/gambles.csv"))
+df_internal_external <- read_csv(str_c(dir_clean, "/internal_external.csv"))
+df_spam <- read_csv(str_c(dir_clean, "/meadows_spam_simple.csv"))
+df_prob <- read_csv(str_c(dir_clean, "/probability.csv"))
+df_gamble_ids <- read_csv(str_c(dir_clean, "/gamble_ids.csv"))
+```
+
+# Figure 1 - Methods
+
+See publication for figure 1. 
+
+# Figure 2 - Experiment 1
+
+See experiment1_analysis script.
+
+# Figure 3 - Conceptual representations of uncertainty are one dimensional and organized by valence or probability
+
+A) The percentage of variance explained for principal dimension from the similarity data reveals a sharp kink after the first component, illustrating that the variance is best explained by one component.
+B) Plot of solution of multidimensional scaling of the similarity. data using the first two dimensions. 
+C) Group-level representational dissimilarity matrix of uncertainty words, organized by hierarchical cluster.
+
+```{r fig3s}
+## Figure 3 Group RDM
+df_to_matrix <- function(df) {
+  
+  unc_matrix <- matrix(df$mean_dist, nrow = 18, ncol = 18, byrow=TRUE, 
+                       dimnames = list(c(unique(df$uncertain1)), c(unique(df$uncertain2))))
+  
+  return(unc_matrix)
+}
+
+fig3_group <- df_spam %>% 
+  group_by(uncertain1, uncertain2) %>% 
+  summarise(mean_dist = mean(rdm_values))
+fig3_group_rdm <- df_to_matrix(fig3_group)
+
+fig3_mds <- cmdscale(fig3_group_rdm, eig=TRUE)
+fig3_eigens <- fig3_mds$eig
+pca1_var <- fig3_eigens[1] / sum(fig3_eigens)
+pca2_var <- fig3_eigens[2] / sum(fig3_eigens)
+pca3_var <- fig3_eigens[3] / sum(fig3_eigens)
+
+## Figure 3a
+fig3a_data <- data.frame(var = fig3_mds$eig / sum(fig3_mds$eig), 
+                         pca = seq(1, length(fig3_mds$eig)))
+
+fig3a_plot <- ggplot(fig3a_data, aes(x = pca, y = var)) + 
+  geom_point(size = 2) + 
+  geom_line() + 
+  scale_x_continuous(name = "Principal Component", breaks = c(5, 10, 15)) + 
+  scale_y_continuous(name = "Variance Explained (%)", label = scales::percent) + 
+  theme_classic() + 
+  theme(text = element_text(size = 10))
+fig3a_plot
+ggsave(filename=str_c(dir_graphs, "/fig3a.pdf"), fig3a_plot , width = 3, height = 2.5, useDingbats=F)
+
+## Figure 3b
+fig3b_data <- as.data.frame(fig3_mds$points) %>%
+  rename(pca1 = V1, pca2 = V2) %>%
+  rownames_to_column(var = "uncertain")
+
+fig3b_plot <- ggplot(fig3b_data, aes(x = pca1, y = pca2)) + 
+  geom_point() + 
+  geom_text_repel(aes(label = uncertain)) + 
+  xlab(str_c("PCA1: ", as.character(round(pca1_var*100)), "%")) + 
+  ylab(str_c("PCA2: ", as.character(round(pca2_var*100)), "%")) + 
+  theme_classic() + 
+  theme(text = element_text(size = 12), 
+        aspect.ratio = 1)
+fig3b_plot
+ggsave(filename=str_c(dir_graphs, "/fig3b.pdf"), fig3b_plot , width = 4, height = 4, useDingbats=F)
+
+
+## Figure 3c - RDM with clustering
+
+# Hierarchical clustering 
+fig3c_hc <- hclust(as.dist(fig3_group_rdm), method = "complete")
+
+cluster_cols <- as.data.frame(cutree(fig3c_hc, k = 2)) %>%
+  rownames_to_column(var = "uncertain") %>%
+  rename(clusters = `cutree(fig3c_hc, k = 2)`)
+
+fig3c_data <- fig3_group %>%
+  left_join(., cluster_cols %>% select(cluster1 = clusters, uncertain1 = uncertain), by = "uncertain1") %>%
+  left_join(., cluster_cols %>% select(cluster2 = clusters, uncertain2 = uncertain), by = "uncertain2")
+
+fig3c_plot <- ggplot(fig3c_data, aes(x = reorder(uncertain1, cluster1), y = reorder(uncertain2, cluster2))) + 
+  geom_tile(aes(fill = mean_dist)) + 
+  scale_fill_gradient2(low = "red", mid = "orange", midpoint = mean(fig3c_data$mean_dist), high = "yellow") + 
+  theme_classic() + 
+  theme(text = element_text(size = 16), 
+        axis.text.x = element_text(angle = 45, hjust = 1), 
+        aspect.ratio = 1)
+fig3c_plot
+ggsave(filename=str_c(dir_graphs, "/fig3c.pdf"), fig3c_plot , width = 6, height = 6, useDingbats=F)
+
+## Correlation MDS solution x valence
+fig3e_valence <- df_darm %>% 
+  group_by(uncertain_word) %>%
+  summarise(mean_v = mean(valence), sd_v = sd(valence), 
+            n_v = n(), se_v = sd_v / sqrt(n_v))
+
+fig3e_data <- as.data.frame(fig3_mds$points) %>%
+  rename(pca1 = V1, pca2 = V2) %>%
+  #rownames_to_column(var = "uncertain_word") %>%
+  cbind(fig3e_valence)
+
+fig3e_cor <- cor.test(fig3e_data$pca1, fig3e_data$mean_v, method = "spearman")
+
+
+## MDS solution x probability 
+fig3f_prob <- df_prob %>% 
+  group_by(uncertain_word) %>%
+  summarise(mean_p = mean(probability/100), sd_p = sd(probability/100), 
+            n_p = n(), se_p = sd_p / sqrt(n_p))
+
+fig3f_data <- as.data.frame(fig3_mds$points) %>%
+  rename(pca1 = V1, pca2 = V2) %>%
+  #rownames_to_column(var = "uncertain_word") %>%
+  cbind(fig3f_prob)
+
+fig3f_cor <- cor.test(fig3f_data$pca1, fig3f_data$mean_p, method = "spearman")
+
+
+## Arousal
+fig3g_arousal <- df_darm %>% 
+  group_by(uncertain_word) %>%
+  summarise(mean_a = mean(arousal), sd_a = sd(arousal), 
+            n_a = n(), se_a = sd_a / sqrt(n_a))
+
+fig3g_data <- as.data.frame(fig3_mds$points) %>%
+  rename(pca1 = V1, pca2 = V2) %>%
+  #rownames_to_column(var = "uncertain_word") %>%
+  cbind(fig3g_arousal)
+fig3g_cor <- cor.test(fig3g_data$pca1, fig3g_data$mean_a, method = "spearman")
+
+
+## Internal externa;
+fig3h_internal_external <- df_internal_external %>% 
+  group_by(uncertain_word) %>%
+  summarise(mean_i = mean(internal_external), sd_i = sd(internal_external), 
+            n_i = n(), se_i = sd_i / sqrt(n_i))
+
+fig3h_data <- as.data.frame(fig3_mds$points) %>%
+  rename(pca1 = V1, pca2 = V2) %>%
+  #rownames_to_column(var = "uncertain_word") %>%
+  cbind(fig3h_internal_external)
+fig3h_cor <- cor.test(fig3h_data$pca1, fig3h_data$mean_i, method = "spearman")
+
+# All correlations
+fig3e_cor # valence     r = -0.71
+fig3f_cor # probability r = -0.90
+fig3g_cor # arousal     r = -0.37
+fig3h_cor # int-ext     r = 0.30
+
+
+## Correlation between prob and valence
+fig3g_data <- fig3e_valence %>%
+  cbind(fig3f_prob)
+
+cor.test(fig3g_data$mean_v, fig3g_data$mean_p, method = "spearman")
+```
+
+# Intext analysis - Probability and valence contribute to structuring uncertainty representations
+
+```{r intext_3.2}
+##  Correlation of gambling behavior and of spam (and all others)
+
+#### Gamble matrix ####
+fig3a_gamble <- df_gambles %>%
+  filter(sub != 59, sub != 115) %>% # excluded for having 0 variance in other tasks (can't correlate)
+  mutate(choice = case_when(choice == 2 ~ 1, 
+                            choice == 1 ~ 0)) %>%
+  arrange(sub, gamble)
+
+n_subs <- fig3a_gamble %>% select(sub) %>% unique() %>% tally() %>% pull()
+sub_nums <- fig3a_gamble %>% select(sub) %>% unique() %>% pull()
+n_gambles <- fig3a_gamble %>% select(gamble) %>% unique() %>% tally() %>% pull()
+
+fig3a_gamble_matrix <- matrix(1, n_gambles, n_subs)
+
+for (i in seq(1:n_subs)) {
+  fig3a_gamble_matrix[,i] <- fig3a_gamble %>% filter(sub == sub_nums[i]) %>% pull(choice)
+}
+
+#### Valence & arousal matrices ####
+fig3a_darm <- df_darm %>%
+  filter(sub != 59, sub != 115) %>%
+  arrange(sub, uncertain_word)
+
+n_subs <- fig3a_darm %>% select(sub) %>% unique() %>% tally() %>% pull()
+sub_nums <- fig3a_darm %>% select(sub) %>% unique() %>% pull()
+n_words <- fig3a_darm %>% select(uncertain_word) %>% unique() %>% tally() %>% pull()
+
+fig3a_valence_matrix <- matrix(1, n_words, n_subs)
+fig3a_arousal_matrix <- matrix(1, n_words, n_subs)
+
+for (i in seq(1:n_subs)) {
+  fig3a_valence_matrix[,i] <- fig3a_darm %>% filter(sub == sub_nums[i]) %>% pull(valence)
+  fig3a_arousal_matrix[,i] <- fig3a_darm %>% filter(sub == sub_nums[i]) %>% pull(arousal)
+}
+
+#### Probability matrix ####
+fig3a_prob <- df_prob %>%
+  filter(sub != 59, sub != 115) %>%
+  arrange(sub, uncertain_word)
+
+n_subs <- fig3a_prob %>% select(sub) %>% unique() %>% tally() %>% pull()
+sub_nums <- fig3a_prob %>% select(sub) %>% unique() %>% pull()
+n_words <- fig3a_prob %>% select(uncertain_word) %>% unique() %>% tally() %>% pull()
+
+fig3a_prob_matrix <- matrix(1, n_words, n_subs)
+
+for (i in seq(1:n_subs)) {
+  fig3a_prob_matrix[,i] <- fig3a_prob %>% filter(sub == sub_nums[i]) %>% pull(probability)
+}
+
+#### Internal external matrix ####
+fig3a_intext <- df_internal_external %>%
+  filter(sub != 59, sub != 115) %>%
+  arrange(sub, uncertain_word)
+
+n_subs <- fig3a_intext %>% select(sub) %>% unique() %>% tally() %>% pull()
+sub_nums <- fig3a_intext %>% select(sub) %>% unique() %>% pull()
+n_words <- fig3a_intext %>% select(uncertain_word) %>% unique() %>% tally() %>% pull()
+
+fig3a_intext_matrix <- matrix(1, n_words, n_subs)
+
+for (i in seq(1:n_subs)) {
+  fig3a_intext_matrix[,i] <- fig3a_intext %>% filter(sub == sub_nums[i]) %>% pull(internal_external)
+}
+
+#### SPAM matrix ####
+fig3a_spam <- df_spam %>%
+  filter(sub != 59, sub != 115) %>%
+  arrange(sub, uncertain1, uncertain2)
+
+n_subs <- fig3a_spam %>% select(sub) %>% unique() %>% tally() %>% pull()
+sub_nums <- fig3a_spam %>% select(sub) %>% unique() %>% pull()
+n_words <- fig3a_spam %>% select(uncertain1, uncertain2) %>% unique() %>% tally() %>% pull()
+
+fig3a_spam_matrix <- matrix(1, n_words, n_subs)
+
+for (i in seq(1:n_subs)) {
+  fig3a_spam_matrix[,i] <- fig3a_spam %>% filter(sub == sub_nums[i]) %>% pull(rdm_values)
+}
+
+#### Create correlation matrices
+fig3a_gamble_cor_matrix <- cor(fig3a_gamble_matrix, method = "spearman") %>% as.matrix()
+fig3a_valence_cor_matrix <- cor(fig3a_valence_matrix, method = "spearman") %>% as.matrix()
+fig3a_arousal_cor_matrix <- cor(fig3a_arousal_matrix, method = "spearman") %>% as.matrix()
+fig3a_intext_cor_matrix <- cor(fig3a_intext_matrix, method = "spearman") %>% as.matrix()
+fig3a_prob_cor_matrix <- cor(fig3a_prob_matrix, method = "spearman") %>% as.matrix()
+fig3a_spam_cor_matrix <- cor(fig3a_spam_matrix, method = "spearman") %>% as.matrix()
+
+## fig3a permutation testing
+# Goal: Create 100,000 random permutations of both gamble and valence behaviors 
+#       by shuffling participant data and doing a correlation. Store the spearman
+#       correlation and repeat
+
+lead_wrap <- function(y, n) {
+  # Function wraps vector on itself according to a lead
+  part1 <- lead(y, n-1) # goes from n-1 to end of y
+  part2 <- y[1:n-1] # want to go from beginning of y to n-1
+  
+  # Remove NA
+  y_new <- c(part1[!is.na(part1)], part2)
+  return(y_new)
+}
+
+lag_wrap <- function(y, n) {
+  # Function wraps vector on itself according to a lead
+  part1 <- lag(y, n-1) # shifts beginning of y down n-1
+  part2 <- tail(y, n-1) # want to get last n-1 elements
+  
+  # Remove NA
+  y_new <- c(part2, part1[!is.na(part1)])
+  return(y_new)
+}
+
+num_perm <- 100000
+gamble_valence_r <- data.frame(r = vector(length = num_perm), p = vector(length = num_perm))
+gamble_spam_r <-  data.frame(r = vector(length = num_perm), p = vector(length = num_perm))
+gamble_arousal_r <-  data.frame(r = vector(length = num_perm), p = vector(length = num_perm))
+gamble_prob_r <-  data.frame(r = vector(length = num_perm), p = vector(length = num_perm))
+gamble_intext_r <-  data.frame(r = vector(length = num_perm), p = vector(length = num_perm))
+
+for (j in seq(1:num_perm)) {
+  print(str_c(as.character(round(j/num_perm, 5)*100), "%"))
+  
+  # Permute cor matrix of all except gamble_cor_matrix
+  x <- sample(dim(fig3a_valence_cor_matrix)[1])
+  
+  # Remake cor matrix with ordering using x
+  fig3a_spam_cor_matrix_permute <- matrix(1, n_subs, n_subs)
+  fig3a_valence_cor_matrix_permute <- matrix(1, n_subs, n_subs)
+  fig3a_arousal_cor_matrix_permute <- matrix(1, n_subs, n_subs)
+  fig3a_intext_cor_matrix_permute <- matrix(1, n_subs, n_subs)
+  fig3a_prob_cor_matrix_permute <- matrix(1, n_subs, n_subs)
+  
+  for (i in seq(1:length(x))) {
+    # make everything 1's at the top
+    fig3a_valence_cor_matrix_permute[,i] <- lead_wrap(y = fig3a_valence_cor_matrix[,x[i]], n = x[i])
+    fig3a_arousal_cor_matrix_permute[,i] <- lead_wrap(y = fig3a_arousal_cor_matrix[,x[i]], n = x[i])
+    fig3a_spam_cor_matrix_permute[,i] <- lead_wrap(y = fig3a_spam_cor_matrix[,x[i]], n = x[i])
+    fig3a_prob_cor_matrix_permute[,i] <- lead_wrap(y = fig3a_prob_cor_matrix[,x[i]], n = x[i])
+    fig3a_intext_cor_matrix_permute[,i] <- lead_wrap(y = fig3a_intext_cor_matrix[,x[i]], n = x[i])
+    
+    # put into right place
+    fig3a_valence_cor_matrix_permute[,i] <- lag_wrap(y = fig3a_valence_cor_matrix_permute[,i], n = i)
+    fig3a_arousal_cor_matrix_permute[,i] <- lag_wrap(y = fig3a_arousal_cor_matrix_permute[,i], n = i)
+    fig3a_spam_cor_matrix_permute[,i] <- lag_wrap(y = fig3a_spam_cor_matrix_permute[,i], n = i)
+    fig3a_prob_cor_matrix_permute[,i] <- lag_wrap(y = fig3a_prob_cor_matrix_permute[,i], n = i)
+    fig3a_intext_cor_matrix_permute[,i] <- lag_wrap(y = fig3a_intext_cor_matrix_permute[,i], n = i)
+  }
+  
+  #### Test correlation (lower triangle only)
+  gv_r <- cor.test(fig3a_gamble_cor_matrix[lower.tri(fig3a_gamble_cor_matrix)], 
+                   fig3a_valence_cor_matrix_permute[lower.tri(fig3a_valence_cor_matrix_permute)], method = "spearman", exact = FALSE)
+  ga_r <- cor.test(fig3a_gamble_cor_matrix[lower.tri(fig3a_gamble_cor_matrix)], 
+                   fig3a_arousal_cor_matrix_permute[lower.tri(fig3a_arousal_cor_matrix_permute)], method = "spearman", exact = FALSE)
+  gs_r <- cor.test(fig3a_gamble_cor_matrix[lower.tri(fig3a_gamble_cor_matrix)], 
+                   fig3a_spam_cor_matrix_permute[lower.tri(fig3a_spam_cor_matrix_permute)], method = "spearman", exact = FALSE)
+  gi_r <- cor.test(fig3a_gamble_cor_matrix[lower.tri(fig3a_gamble_cor_matrix)], 
+                   fig3a_intext_cor_matrix_permute[lower.tri(fig3a_intext_cor_matrix_permute)], method = "spearman", exact = FALSE)
+  gp_r <- cor.test(fig3a_gamble_cor_matrix[lower.tri(fig3a_gamble_cor_matrix)], 
+                   fig3a_prob_cor_matrix_permute[lower.tri(fig3a_prob_cor_matrix_permute)], method = "spearman", exact = FALSE)
+  
+  #### Store
+  gamble_valence_r$r[j] <- as.numeric(gv_r$estimate)
+  gamble_valence_r$p[j] <- as.numeric(gv_r$p.value)
+  gamble_arousal_r$r[j] <- as.numeric(ga_r$estimate)
+  gamble_arousal_r$p[j] <- as.numeric(ga_r$p.value)
+  gamble_spam_r$r[j] <- as.numeric(gs_r$estimate)
+  gamble_spam_r$p[j] <- as.numeric(gs_r$p.value)
+  gamble_intext_r$r[j] <- as.numeric(gi_r$estimate)
+  gamble_intext_r$p[j] <- as.numeric(gi_r$p.value)
+  gamble_prob_r$r[j] <- as.numeric(gp_r$estimate)
+  gamble_prob_r$p[j] <- as.numeric(gp_r$p.value)
+}
+
+# Save for future
+save(gamble_valence_r, file = str_c(dir_clean, "/bootstrap/gamble_valence_bootstrap.Rdata"))
+save(gamble_arousal_r, file = str_c(dir_clean, "/bootstrap/gamble_arousal_bootstrap.Rdata"))
+save(gamble_spam_r, file = str_c(dir_clean, "/bootstrap/gamble_spam_bootstrap.Rdata"))
+save(gamble_intext_r, file = str_c(dir_clean, "/bootstrap/gamble_intext_bootstrap.Rdata"))
+save(gamble_prob_r, file = str_c(dir_clean, "/bootstrap/gamble_prob_bootstrap.Rdata"))
+
+##### Figure 3a - Cor of gamble matrix with spam matrix ######
+fig3a_gs_cor <- cor.test(fig3a_gamble_cor_matrix[lower.tri(fig3a_gamble_cor_matrix)], 
+                         fig3a_spam_cor_matrix[lower.tri(fig3a_spam_cor_matrix)], method = "spearman", exact = FALSE)
+
+quantile(gamble_spam_r$r, .99) # compare against bootstrap
+quantile(gamble_valence_r$r, .99) # compare against bootstrap
+
+# fig3a - Permutation with true value
+fig3a_plot <- ggplot(gamble_spam_r, aes(x = r)) + 
+  geom_histogram(fill = "white", color = "black") +
+  geom_vline(aes(xintercept = fig3a_gs_cor$estimate), linetype = "dashed", color = "red") + 
+  theme_classic() + 
+  theme(text = element_text(size = 12))
+fig3a_plot
+ggsave(filename=str_c(dir_graphs, "/fig3a.pdf"), fig3a_plot , width = 4, height = 4, useDingbats=F)
+```
+
+# Figure 4a - Conceptual representations of uncertainty predict risky decision-making
+
+A) The correlation coefficients matrix for all tasks. Results reveal that gambling behavior is predicted by conceptual representations of uncertainty, probability, and valence.
+
+```{r fig4a}
+# Correlation plot of all measures with spam 
+## Figure 4 - Correlation of gambling behavior and of spam (and all others)
+
+#### Gamble matrix ####
+fig4a_gamble <- df_gambles %>%
+  filter(sub != 59, sub != 115) %>% # two have to be excluded for 0 variance in one of the other tasks, making correlation plot impossible
+  mutate(choice = case_when(choice == 2 ~ 1, 
+                            choice == 1 ~ 0)) %>%
+  arrange(sub, gamble)
+
+n_subs <- fig4a_gamble %>% select(sub) %>% unique() %>% tally() %>% pull()
+sub_nums <- fig4a_gamble %>% select(sub) %>% unique() %>% pull()
+n_gambles <- fig4a_gamble %>% select(gamble) %>% unique() %>% tally() %>% pull()
+
+fig4a_gamble_matrix <- matrix(1, n_gambles, n_subs)
+
+for (i in seq(1:n_subs)) {
+  fig4a_gamble_matrix[,i] <- fig4a_gamble %>% filter(sub == sub_nums[i]) %>% pull(choice)
+}
+
+#### Valence & arousal matrices ####
+fig4a_darm <- df_darm %>%
+  filter(sub != 59, sub != 115) %>%
+  arrange(sub, uncertain_word)
+
+n_subs <- fig4a_darm %>% select(sub) %>% unique() %>% tally() %>% pull()
+sub_nums <- fig4a_darm %>% select(sub) %>% unique() %>% pull()
+n_words <- fig4a_darm %>% select(uncertain_word) %>% unique() %>% tally() %>% pull()
+
+fig4a_valence_matrix <- matrix(1, n_words, n_subs)
+fig4a_arousal_matrix <- matrix(1, n_words, n_subs)
+
+for (i in seq(1:n_subs)) {
+  fig4a_valence_matrix[,i] <- fig4a_darm %>% filter(sub == sub_nums[i]) %>% pull(valence)
+  fig4a_arousal_matrix[,i] <- fig4a_darm %>% filter(sub == sub_nums[i]) %>% pull(arousal)
+}
+
+#### Probability Matrix ####
+fig4a_prob <- df_prob %>%
+  filter(sub != 59, sub != 115) %>%
+  arrange(sub, uncertain_word)
+
+n_subs <- fig4a_prob %>% select(sub) %>% unique() %>% tally() %>% pull()
+sub_nums <- fig4a_prob %>% select(sub) %>% unique() %>% pull()
+n_words <- fig4a_prob %>% select(uncertain_word) %>% unique() %>% tally() %>% pull()
+
+fig4a_prob_matrix <- matrix(1, n_words, n_subs)
+
+for (i in seq(1:n_subs)) {
+  fig4a_prob_matrix[,i] <- fig4a_prob %>% filter(sub == sub_nums[i]) %>% pull(probability)
+}
+
+#### Internal external #### Matrix
+fig4a_intext <- df_internal_external %>%
+  filter(sub != 59, sub != 115) %>%
+  arrange(sub, uncertain_word)
+
+n_subs <- fig4a_intext %>% select(sub) %>% unique() %>% tally() %>% pull()
+sub_nums <- fig4a_intext %>% select(sub) %>% unique() %>% pull()
+n_words <- fig4a_intext %>% select(uncertain_word) %>% unique() %>% tally() %>% pull()
+
+fig4a_intext_matrix <- matrix(1, n_words, n_subs)
+
+for (i in seq(1:n_subs)) {
+  fig4a_intext_matrix[,i] <- fig4a_intext %>% filter(sub == sub_nums[i]) %>% pull(internal_external)
+}
+
+#### SPAM #### Matrix
+fig4a_spam <- df_spam %>%
+  filter(sub != 59, sub != 115) %>%
+  arrange(sub, uncertain1, uncertain2)
+
+n_subs <- fig4a_spam %>% select(sub) %>% unique() %>% tally() %>% pull()
+sub_nums <- fig4a_spam %>% select(sub) %>% unique() %>% pull()
+n_words <- fig4a_spam %>% select(uncertain1, uncertain2) %>% unique() %>% tally() %>% pull()
+
+fig4a_spam_matrix <- matrix(1, n_words, n_subs)
+
+for (i in seq(1:n_subs)) {
+  fig4a_spam_matrix[,i] <- fig4a_spam %>% filter(sub == sub_nums[i]) %>% pull(rdm_values)
+}
+
+#### Correlation matrix: gamble x valence
+fig4a_gamble_cor_matrix <- cor(fig4a_gamble_matrix, method = "spearman")
+fig4a_valence_cor_matrix <- cor(fig4a_valence_matrix, method = "spearman")
+fig4a_arousal_cor_matrix <- cor(fig4a_arousal_matrix, method = "spearman")
+fig4a_prob_cor_matrix <- cor(fig4a_prob_matrix, method = "spearman")
+fig4a_intext_cor_matrix <- cor(fig4a_intext_matrix, method = "spearman")
+fig4a_spam_cor_matrix <- cor(fig4a_spam_matrix, method = "spearman")
+
+#### Correlation of correlation matrices (only keeping lower triangle)
+fig4a_gv <- cor.test(fig4a_gamble_cor_matrix[lower.tri(fig4a_gamble_cor_matrix)], 
+                     fig4a_valence_cor_matrix[lower.tri(fig4a_valence_cor_matrix)], method = "spearman", exact = FALSE)
+fig4a_ga <- cor.test(fig4a_gamble_cor_matrix[lower.tri(fig4a_gamble_cor_matrix)],
+                     fig4a_arousal_cor_matrix[lower.tri(fig4a_arousal_cor_matrix)], method = "spearman", exact = FALSE)
+fig4a_gs <- cor.test(fig4a_gamble_cor_matrix[lower.tri(fig4a_gamble_cor_matrix)],
+                     fig4a_spam_cor_matrix[lower.tri(fig4a_spam_cor_matrix)], method = "spearman", exact = FALSE)
+fig4a_gp <- cor.test(fig4a_gamble_cor_matrix[lower.tri(fig4a_gamble_cor_matrix)],
+                     fig4a_prob_cor_matrix[lower.tri(fig4a_prob_cor_matrix)], method = "spearman", exact = FALSE)
+fig4a_gi <- cor.test(fig4a_gamble_cor_matrix[lower.tri(fig4a_gamble_cor_matrix)],
+                     fig4a_intext_cor_matrix[lower.tri(fig4a_intext_cor_matrix)], method = "spearman", exact = FALSE)
+
+fig4a_va <- cor.test(fig4a_valence_cor_matrix[lower.tri(fig4a_valence_cor_matrix)], 
+                     fig4a_arousal_cor_matrix[lower.tri(fig4a_arousal_cor_matrix)], method = "spearman", exact = FALSE)
+fig4a_vs <- cor.test(fig4a_valence_cor_matrix[lower.tri(fig4a_valence_cor_matrix)],
+                     fig4a_spam_cor_matrix[lower.tri(fig4a_spam_cor_matrix)], method = "spearman", exact = FALSE)
+fig4a_vp <- cor.test(fig4a_valence_cor_matrix[lower.tri(fig4a_valence_cor_matrix)],
+                     fig4a_prob_cor_matrix[lower.tri(fig4a_prob_cor_matrix)], method = "spearman", exact = FALSE)
+fig4a_vi <- cor.test(fig4a_valence_cor_matrix[lower.tri(fig4a_valence_cor_matrix)],
+                     fig4a_intext_cor_matrix[lower.tri(fig4a_intext_cor_matrix)], method = "spearman", exact = FALSE)
+
+fig4a_as <- cor.test(fig4a_arousal_cor_matrix[lower.tri(fig4a_arousal_cor_matrix)],
+                     fig4a_spam_cor_matrix[lower.tri(fig4a_spam_cor_matrix)], method = "spearman", exact = FALSE)
+fig4a_ap <- cor.test(fig4a_arousal_cor_matrix[lower.tri((fig4a_arousal_cor_matrix))], 
+                     fig4a_prob_cor_matrix[lower.tri(fig4a_prob_cor_matrix)], method = "spearman", exact = FALSE)
+fig4a_ai <- cor.test(fig4a_arousal_cor_matrix[lower.tri(fig4a_arousal_cor_matrix)], 
+                     fig4a_intext_cor_matrix[lower.tri(fig4a_intext_cor_matrix)], method = "spearman", exact = FALSE)
+
+fig4a_sp <- cor.test(fig4a_spam_cor_matrix[lower.tri(fig4a_spam_cor_matrix)], 
+                     fig4a_prob_cor_matrix[lower.tri(fig4a_prob_cor_matrix)], method = "spearman", exact = FALSE)
+fig4a_si <- cor.test(fig4a_spam_cor_matrix[lower.tri(fig4a_spam_cor_matrix)], 
+                     fig4a_intext_cor_matrix[lower.tri(fig4a_intext_cor_matrix)], method = "spearman", exact = FALSE)
+
+fig4a_pi <- cor.test(fig4a_prob_cor_matrix[lower.tri(fig4a_prob_cor_matrix)], 
+                     fig4a_intext_cor_matrix[lower.tri(fig4a_intext_cor_matrix)], method = "spearman", exact = FALSE)
+
+## Cor plot
+fig4a_data <- matrix(nrow = 6, ncol = 6)
+rownames(fig4a_data) <- c("gamble", "spam", "probability", "valence", "arousal", "source")
+colnames(fig4a_data) <- c("gamble", "spam", "probability", "valence", "arousal", "source")
+
+fig4a_data[,1] <- c(1, fig4a_gs$estimate, fig4a_gp$estimate, fig4a_gv$estimate, fig4a_ga$estimate, fig4a_gi$estimate)
+fig4a_data[,2] <- c(fig4a_gs$estimate, 1, fig4a_sp$estimate, fig4a_vs$estimate, fig4a_as$estimate, fig4a_si$estimate)
+fig4a_data[,3] <- c(fig4a_gp$estimate, fig4a_sp$estimate, 1, fig4a_vp$estimate, fig4a_ap$estimate, fig4a_pi$estimate)
+fig4a_data[,4] <- c(fig4a_gv$estimate, fig4a_vs$estimate, fig4a_vp$estimate, 1, fig4a_va$estimate, fig4a_vi$estimate)
+fig4a_data[,5] <- c(fig4a_ga$estimate, fig4a_as$estimate, fig4a_ap$estimate, fig4a_va$estimate, 1, fig4a_ai$estimate)
+fig4a_data[,6] <- c(fig4a_gi$estimate, fig4a_si$estimate, fig4a_pi$estimate, fig4a_vi$estimate, fig4a_ai$estimate, 1)
+
+pdf(file = str_c(dir_graphs, "/fig4a.pdf"))
+corrplot(fig4a_data, col.lim = c(0,1),  addCoef.col ='black', diag = FALSE, type = "upper")
+dev.off()
+```
+
+# Figure 4b
+
+Figure 4b in the manuscript.
+
+```{r fig4b}
+# Average spam participant correlation to create an "average similarity" of SpAM behavior to everyone else
+# This requires removing the identity and averaging over the column
+
+fig4a_spam_cor_matrix_copy <- fig4a_spam_cor_matrix
+diag(fig4a_spam_cor_matrix_copy) <- NA # remove diagonal (all 1s)
+spam_cor_similarity <- data.frame(spam_avg_cor = fig4a_spam_cor_matrix_copy %>%
+                                    colMeans(na.rm = T)) %>%
+  mutate(sub = fig4a_spam %>% select(sub) %>% unique() %>% pull(), 
+         median_split = case_when(spam_avg_cor > median(spam_avg_cor) ~ "similar", 
+                                  spam_avg_cor <= median(spam_avg_cor) ~ "dissimilar"))
+
+# Average valence and probability ratings based on median split for spam similarity 
+fig4b_data <- spam_cor_similarity %>%
+  left_join(., df_darm %>% select(sub, uncertain_word, valence), by = "sub") %>%
+  left_join(., df_prob %>% select(sub, uncertain_word, probability), by = c("sub", "uncertain_word")) %>%
+  mutate(certain_group = case_when(uncertain_word == "risky" ~ "uncertain", 
+                                   uncertain_word == "erratic" ~ "uncertain", 
+                                   uncertain_word == "improbable" ~ "uncertain", 
+                                   uncertain_word == "unexpected" ~ "uncertain", 
+                                   uncertain_word == "doubtful" ~ "uncertain", 
+                                   uncertain_word == "uncertain" ~ "uncertain",
+                                   uncertain_word == "questionable" ~ "uncertain", 
+                                   uncertain_word == "unknown" ~ "uncertain", 
+                                   uncertain_word == "ambiguous" ~ "uncertain", 
+                                   uncertain_word == "vague" ~ "uncertain", 
+                                   uncertain_word == "frequent" ~ "certain", 
+                                   uncertain_word == "likely" ~ "certain", 
+                                   uncertain_word == "possible" ~ "certain", 
+                                   uncertain_word == "predictable" ~ "certain",
+                                   uncertain_word == "confident" ~ "certain", 
+                                   uncertain_word == "certain" ~ "certain", 
+                                   uncertain_word == "definite" ~ "certain", 
+                                   uncertain_word == "inevitable" ~ "certain"))
+
+fig4b_sub_data <- fig4b_data %>% 
+  group_by(median_split, sub, spam_avg_cor, certain_group) %>%
+  summarise(mean_sub_valence = mean(valence), mean_sub_prob = mean(probability), 
+            sd_sub_valence = sd(valence), sd_sub_prob = sd(probability))
+
+# Plot
+fig4b_avg_data <- fig4b_sub_data %>%
+  group_by(median_split, certain_group) %>%
+  summarise(mean_valence = mean(mean_sub_valence), sd_valence = sd(mean_sub_valence),
+            n_valence = n(), se_valence = sd_valence / sqrt(n_valence), 
+            mean_prob = mean(mean_sub_prob), sd_prob = sd(mean_sub_prob),
+            n_prob = n(), se_prob = sd_prob / sqrt(n_prob))
+
+group_colors <- c("#0175BB", "#F0C11A")
+
+fig4b_plot1 <- ggplot(fig4b_avg_data, aes(x = median_split, y = mean_valence, fill = certain_group)) + 
+  geom_col(position = position_dodge(.9)) + 
+  geom_errorbar(aes(ymin = mean_valence - se_valence, ymax = mean_valence + se_valence), 
+                position = position_dodge(.9), width = .1) + 
+  scale_y_continuous(name = "Valence") + 
+  scale_fill_manual(values = group_colors) + 
+  xlab("SPaM Group") + 
+  theme_classic()
+
+fig4b_plot2 <- ggplot(fig4b_avg_data, aes(x = median_split, y = mean_prob, fill = certain_group)) + 
+  geom_col(position = position_dodge(.9)) + 
+  geom_errorbar(aes(ymin = mean_prob - se_prob, ymax = mean_prob + se_prob), 
+                position = position_dodge(.9), width = .1) + 
+  scale_y_continuous(name = "Probability") + 
+  scale_fill_manual(values = group_colors) + 
+  xlab("SPaM Group") + 
+  theme_classic()
+
+fig4b_plot <- cowplot::plot_grid(fig4b_plot1, fig4b_plot2, labels = c("A", "B"))
+fig4b_plot
+
+ggsave(filename = str_c(dir_graphs, "/fig4b.pdf"), fig4b_plot, width = 6, height = 4)
+
+# Regression stats 
+fig4b_model1 <- lmer(valence ~ median_split*certain_group + (1 + certain_group | sub), 
+                       data = fig4b_data)
+summary(fig4b_model1)
+
+fig4b_model2 <- lmer(probability ~ median_split*certain_group + (1 + certain_group | sub), 
+                       data = fig4b_data)
+summary(fig4b_model2)
+
+# T-test on difference (valence)
+ttest_1 <- fig4b_data %>% 
+  group_by(sub, certain_group, median_split) %>%
+  summarise(mean_sub_valence = mean(valence)) %>%
+  pivot_wider(names_from = certain_group, values_from = "mean_sub_valence") %>%
+  mutate(valence_diff = uncertain - certain)
+
+t.test(ttest_1$valence_diff[ttest_1$median_split == "dissimilar"], 
+       ttest_1$valence_diff[ttest_1$median_split == "similar"])
+
+# T-test on difference (probability)
+ttest_2 <- fig4b_data %>% 
+  group_by(sub, certain_group, median_split) %>%
+  summarise(mean_sub_prob = mean(probability)) %>%
+  pivot_wider(names_from = certain_group, values_from = "mean_sub_prob") %>%
+  mutate(prob_diff = uncertain - certain)
+
+t.test(ttest_2$prob_diff[ttest_2$median_split == "dissimilar"], 
+       ttest_2$prob_diff[ttest_2$median_split == "similar"])
+```
