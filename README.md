@@ -6,7 +6,7 @@ The manuscript is published in X at the following [doi]() (to add once out).
 # Setup
 Clone repository or simply download in a zip file. 
 
-The R Markdown file in the Analysis folder contains all the analysis code for the paper, as well as a html version, and the supplement. In order to run the code you'll need the packages found in each analysis script.
+The R Markdown file in the Analysis folder contains all the analysis code for the paper, as well as a html version, and the supplement. In order to run the code you'll need to open the R Project and download the packages found in each analysis script.
 
 # Folders
 This repo contains the following folders: experiment1, experiment2.
