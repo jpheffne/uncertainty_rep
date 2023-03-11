@@ -1,0 +1,10 @@
+data/models/
+experiment1/data/raw/
+experiment1/graphs/manuscript_figures/
+experiment2/analysis/model/
+experiment2/data/raw/
+experiment2/graphs/manuscript_figures/
+experiment2/study_docs/
+
+.Rproj.user
+.Rhistory
