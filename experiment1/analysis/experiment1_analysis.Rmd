@@ -135,7 +135,7 @@ fig2b_data <- as.data.frame(fig2_mds$points) %>%
 
 fig2b_plot <- ggplot(fig2b_data, aes(x = pca1, y = pca2)) + 
   geom_point() + 
-  geom_text_repel(aes(label = uncertain)) + 
+  geom_text_repel(aes(label = uncertain), size = 5) + 
   xlab(str_c("PCA1: ", as.character(round(pca1_var*100)), "%")) + 
   ylab(str_c("PCA2: ", as.character(round(pca2_var*100)), "%")) + 
   theme_classic() + 
